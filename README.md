@@ -1,10 +1,12 @@
 # durable.sh — Signal-36 Hardened Shell Primitives
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/digivasserver-ai/durable-sh?color=ff79c6)](https://github.com/digivasserver-ai/durable-sh/releases)
 [![Shell: bash](https://img.shields.io/badge/shell-bash%204.0%2B-blue.svg)](https://www.gnu.org/software/bash/)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-green.svg)](https://www.kernel.org/)
 
-> **One-line install:** `source /path/to/durable.sh`  
+> **Install:** `source <(curl -fsSL https://raw.githubusercontent.com/digivasserver-ai/durable-sh/v0.1.0/lib/durable.sh)`  
+> **Or:** `git clone https://github.com/digivasserver-ai/durable-sh && source durable-sh/lib/durable.sh`  
 > **Protects against:** Android `traced_perf` (signal 36), mid-write kills, stale git locks, silent failures
 
 ---
@@ -26,6 +28,12 @@ On Android (and some Linux kernels), **short-lived processes are killed at ~10�
 **This is not a "freeze" — it's a targeted kill of short-lived processes.**  
 Measured: `sleep 0.001` → 0/40 kills; `sleep 0.2` → 6/40 (15%); `sleep 3.0` → 12%.  
 **Risk plateaus at ~15% — making processes longer buys nothing.**
+
+**Root cause:** `traced_perf`, Android's platform profiler, sends kernel signal 36
+(`BIONIC_SIGNAL_PROFILER`, `__SIGRTMIN+4`) to walk a process's stacks. The default
+disposition of a real-time signal is terminate, so any native binary without a handler
+dies on receipt. Full measurements and the honest limits:
+[Signal 36: the Android profiler that kills your shell scripts](https://digivasserver-ai.github.io/signal-36.html).
 
 ---
 
