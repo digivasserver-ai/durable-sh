@@ -192,7 +192,9 @@ durable::daemon_ensure /var/run/mydaemon.pid /var/log/mydaemon.log \
 
 ## Real-World Provenance
 
-Extracted from **[dev-lab-memory](https://github.com/digivasserver-ai/dev-lab-memory)** — a continuous memory system running on **Android 16 / Termux / proot** (Samsung S24 FE, Exynos 2400) where:
+Extracted from a private continuous-memory dev lab running on **Android 16 / Termux / proot**
+(Samsung S24 FE, Exynos 2400) — published here as the reusable subset, with the measurements
+in [the signal-36 write-up](https://digivasserver-ai.github.io/signal-36.html) — where:
 
 - `map_storage_loop.sh` + `relay_watch.sh` run 24/7 via 30-min cron
 - `memory_sync.sh` pushes to GitHub + GitLab every 30 min
@@ -234,6 +236,6 @@ MIT — see [LICENSE](LICENSE)
 
 ## Related
 
-- [Signal 36 Root Cause Analysis](https://github.com/digivasserver-ai/dev-lab-memory/wiki/SIGNAL-36) — `traced_perf` deep dive
+- [Signal 36: the Android profiler that kills your shell scripts](https://digivasserver-ai.github.io/signal-36.html) — full measurements, reproduction commands, and the honest limits
 - [Letta: "Is a Filesystem All You Need?"](https://www.letta.com/blog/benchmarking-ai-agent-memory/) — filesystem beats vector DB for agent memory
 - [MemGPT Paper](https://arxiv.org/abs/2310.08560) — OS-inspired memory hierarchy
