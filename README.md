@@ -100,7 +100,7 @@ durable::retry 3 5 cmd arg... >/tmp/out 2>&1 || rc=$?
 # Clone
 git clone https://github.com/digivasserver-ai/durable-sh.git
 # Or copy just the library
-curl -sSL https://raw.githubusercontent.com/digivasserver-ai/durable-sh/main/lib/durable.sh -o /usr/local/lib/durable.sh
+curl -sSL https://raw.githubusercontent.com/digivasserver-ai/durable-sh/master/lib/durable.sh -o /usr/local/lib/durable.sh
 
 # In your script:
 source /usr/local/lib/durable.sh
