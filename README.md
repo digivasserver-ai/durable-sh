@@ -25,9 +25,37 @@ On Android (and some Linux kernels), **short-lived processes are killed at ~10�
 | `git push` fails but script exits 0 | `tail` masks exit code |
 | Stale `.git/index.lock` wedges repo | Killed `git add` leaves lock |
 
-**This is not a "freeze" — it's a targeted kill of short-lived processes.**  
-Measured: `sleep 0.001` → 0/40 kills; `sleep 0.2` → 6/40 (15%); `sleep 3.0` → 12%.  
-**Risk plateaus at ~15% — making processes longer buys nothing.**
+**This is not a "freeze" — it's a targeted kill of short-lived processes.**
+
+Kill rate against process lifetime (each row N=25–40, measured on a Samsung S24 FE,
+Android 16, aarch64 openSUSE Tumbleweed proot):
+
+| process lifetime | killed | rate |
+|---|---|---|
+| `/bin/true`, `bash -c "exit 0"` | 0/30 | 0% |
+| `sleep 0.001`, `sleep 0.01` | 0/40 | 0% |
+| `sleep 0.05` | 1/40 | 2% |
+| `sleep 0.2` | 6/40 | 15% |
+| `sleep 1.0` | 2/25 | 8% |
+| `sleep 3.0` | 3/25 | 12% |
+
+Below ~20 ms a process is effectively immune. Between ~20 ms and ~200 ms risk climbs
+steeply, then **plateaus at ~10–15% — making processes longer buys nothing.**
+
+### The guard measured at N=100
+
+| command | default | `trap '' 36` inline | guard via `.profile` only |
+|---|---|---|---|
+| `sleep 0.2` | 13/100 (13%) | **0/100** | 3/100 (3%) |
+| `git rev-list --count HEAD` | 10/100 (10%) | **0/100** | — |
+| `python3 -c print` | 3/100 (3%) | **0/100** | — |
+
+**Inline guard: 0/300. That is the fix.**
+
+The `.profile` route is only partial, and the reason is structural: a shell has to
+*start* before it sources `.profile`, and during that window signal 36 still has its
+default disposition. The guard-setting process itself needs an unprotected window to
+exist. Once `trap '' 36` has run, every descendant is protected indefinitely.
 
 **Root cause:** `traced_perf`, Android's platform profiler, sends kernel signal 36
 (`BIONIC_SIGNAL_PROFILER`, `__SIGRTMIN+4`) to walk a process's stacks. The default
@@ -70,9 +98,9 @@ durable::retry 3 5 cmd arg... >/tmp/out 2>&1 || rc=$?
 
 ```bash
 # Clone
-git clone https://github.com/yourname/durable-sh.git
+git clone https://github.com/digivasserver-ai/durable-sh.git
 # Or copy just the library
-curl -sSL https://raw.githubusercontent.com/yourname/durable-sh/main/lib/durable.sh -o /usr/local/lib/durable.sh
+curl -sSL https://raw.githubusercontent.com/digivasserver-ai/durable-sh/main/lib/durable.sh -o /usr/local/lib/durable.sh
 
 # In your script:
 source /usr/local/lib/durable.sh
@@ -170,6 +198,21 @@ Extracted from **[dev-lab-memory](https://github.com/digivasserver-ai/dev-lab-me
 - `memory_sync.sh` pushes to GitHub + GitLab every 30 min
 - `devlab_init.sh` restarts loops on demand
 - **Zero data loss** since Signal-36 hardening (2026-10-06)
+
+---
+
+## Who this is for
+
+- **Termux / Android users** running scripts or CI on a phone, where processes
+  randomly exit 164 with "Real-time signal 2".
+- **aarch64 Linux users** (Raspberry Pi, Pine, proot containers) on kernels that
+  inherit Android's profiler behaviour.
+- **Packagers and maintainers** who need a one-line, inheritable guarantee rather than
+  a wrapper around every binary.
+- **Anyone writing shell automation** that must not leave a truncated file or a stale
+  git lock behind when it is killed.
+
+If your scripts are reliable and your files never truncate, you do not need this.
 
 ---
 
