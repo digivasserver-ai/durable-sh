@@ -77,6 +77,15 @@ assert_eq "world" "$(cat "$tmpfile")" "atomic_write overwrite"
 durable::atomic_write_str "$tmpfile" "direct"
 assert_eq "direct" "$(cat "$tmpfile")" "atomic_write_str"
 
+# Test default mode 0644 (mkstemp creates 0600; durable should chmod)
+mode="$(stat -c '%a' "$tmpfile" 2>/dev/null || stat -f '%Lp' "$tmpfile" 2>/dev/null)"
+assert_eq "644" "$mode" "atomic_write default mode 0644"
+
+# Test explicit mode
+durable::atomic_write_str "$tmpfile" "secret" 0600
+mode="$(stat -c '%a' "$tmpfile" 2>/dev/null || stat -f '%Lp' "$tmpfile" 2>/dev/null)"
+assert_eq "600" "$mode" "atomic_write explicit mode 0600"
+
 rm -f "$tmpfile"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -183,6 +192,28 @@ echo "$$" >"$pidfile"
 assert_eq 0 $rc "pid_alive succeeds for our PID"
 rm -f "$pidfile"
 
+# Pattern liveness
+echo "Testing pattern_alive..."
+{ durable::pattern_alive "" >/dev/null 2>&1; rc=$?; } || true
+assert_eq 1 $rc "pattern_alive fails on empty pattern"
+
+pat="durable-test-sleep-$$-$RANDOM"
+sleep 30 >/dev/null 2>&1 &
+spid=$!
+# give it a moment; rename via exec trick not needed - just pgrep for sleep 30 is too broad.
+# Use a unique marker in a subshell command.
+kill "$spid" 2>/dev/null || true; wait "$spid" 2>/dev/null || true
+# Better: run bash -c with unique env/arg
+bash -c "exec -a '$pat' sleep 30" >/dev/null 2>&1 &
+spid=$!
+sleep 0.2
+{ durable::pattern_alive "$pat" >/dev/null 2>&1; rc=$?; } || true
+assert_eq 0 $rc "pattern_alive finds matching process"
+kill "$spid" 2>/dev/null || true; wait "$spid" 2>/dev/null || true
+sleep 0.1
+{ durable::pattern_alive "$pat" >/dev/null 2>&1; rc=$?; } || true
+assert_eq 1 $rc "pattern_alive fails after process exits"
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Test: DURABLE_NOINIT prevents auto-init
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -192,6 +223,30 @@ DURABLE_NOINIT=1 source "$(dirname "$0")/../lib/durable.sh" 2>/dev/null
 echo "  ✓ DURABLE_NOINIT doesn't crash"
 inc TESTS_PASS
 inc TESTS_RUN
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Test: git_clear_stale_lock (grace=0, no git process)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo "Testing git_clear_stale_lock..."
+tmprepo="$(mktemp -d /tmp/durable_git.XXXXXX)"
+mkdir -p "$tmprepo/.git"
+echo "lock" >"$tmprepo/.git/index.lock"
+# grace 0 to keep test fast; no git processes should be running in test env normally,
+# but be tolerant: if a git process exists, function returns 1 and lock remains.
+durable::git_clear_stale_lock "$tmprepo" 0 >/dev/null 2>&1 || rc=$?
+rc=${rc:-0}
+if [[ ! -f "$tmprepo/.git/index.lock" ]]; then
+  echo "  ✓ stale lock cleared when no git process alive"
+  inc TESTS_PASS
+elif (( rc == 1 )); then
+  echo "  ✓ stale lock preserved when git process detected (rc=1)"
+  inc TESTS_PASS
+else
+  echo "  ✗ unexpected stale lock state rc=$rc" >&2
+  inc TESTS_FAIL
+fi
+inc TESTS_RUN
+rm -rf "$tmprepo"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Summary

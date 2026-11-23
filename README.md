@@ -5,7 +5,7 @@
 [![Shell: bash](https://img.shields.io/badge/shell-bash%204.0%2B-blue.svg)](https://www.gnu.org/software/bash/)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-green.svg)](https://www.kernel.org/)
 
-> **Install:** `source <(curl -fsSL https://raw.githubusercontent.com/digivasserver-ai/durable-sh/v0.1.0/lib/durable.sh)`  
+> **Install:** `source <(curl -fsSL https://raw.githubusercontent.com/digivasserver-ai/durable-sh/v0.2.0/lib/durable.sh)`  
 > **Or:** `git clone https://github.com/digivasserver-ai/durable-sh && source durable-sh/lib/durable.sh`  
 > **Protects against:** Android `traced_perf` (signal 36), mid-write kills, stale git locks, silent failures
 
@@ -147,8 +147,9 @@ durable::daemon_ensure /var/run/mydaemon.pid /var/log/mydaemon.log \
 ### Atomic I/O
 | Function | Description |
 |----------|-------------|
-| `durable::atomic_write <target>` | Read stdin → temp → mv to target |
-| `durable::atomic_write_str <target> <str>` | Write string atomically |
+| `durable::atomic_write <file> [mode]` | Write stdin atomically (tmp + chmod + mv), default mode `0644` |
+| `durable::atomic_write_str <file> <str> [mode]` | Write string atomically, default mode `0644` |
+| `durable::atomic_append <file> [mode]` | Append atomically (single-writer; read → append → mv) |
 | `durable::atomic_append <target>` | Append stdin atomically |
 
 ### Retry (Parent Shell)
@@ -160,9 +161,10 @@ durable::daemon_ensure /var/run/mydaemon.pid /var/log/mydaemon.log \
 ### Git Hardening
 | Function | Description |
 |----------|-------------|
-| `durable::git_clear_stale_lock [repo]` | Remove `.git/index.lock` if no git processes (5s grace) |
+| `durable::git_clear_stale_lock [repo] [grace_s]` | Remove `.git/index.lock` if no `git*` processes alive (default 5s grace) |
 | `durable::git_commit_retry <msg> [repo]` | Commit with retry + diff_rc handling |
 | `durable::git_push_retry <remote> <branch>` | Push with retry, captures output, tests real rc |
+| `durable::git_mirror_parity <r1> <r2> [ref]` | Verify two remotes resolve same 40-hex SHA for ref |
 
 ### Verification
 | Function | Description |
@@ -173,8 +175,9 @@ durable::daemon_ensure /var/run/mydaemon.pid /var/log/mydaemon.log \
 ### Supervision
 | Function | Description |
 |----------|-------------|
-| `durable::pid_alive <pidfile>` | Check if PID file points to living process |
-| `durable::daemon_ensure <pidfile> <logfile> <cmd> [args...]` | Start/restart daemon with PID file |
+| `durable::pid_alive <pidfile>` | Check if PID file points to living process (pidfile can be stale/missing) |
+| `durable::pattern_alive <pgrep-f-pattern>` | Liveness by `pgrep -f` pattern (preferred for daemons) |
+| `durable::daemon_ensure <pidfile> <logfile> <cmd> [args...]` | Start/restart daemon with PID file + 2s liveness check |
 
 ---
 
@@ -185,7 +188,7 @@ durable::daemon_ensure /var/run/mydaemon.pid /var/log/mydaemon.log \
 | `trap '' 36` | `SIG_IGN` inherited, unresetable | ✅ All descendants |
 | `tmp → mv` | Atomic rename on same FS | ✅ Worst case: missing file |
 | Parent-shell retry | Loop not in subshell | ✅ Loop survives child death |
-| `pgrep` lock check | Only clears when zero git alive | ✅ No false clears |
+| `ps comm` lock check | Clears stale lock only when zero `git*` processes alive | ✅ No false clears |
 | `require_output` | Empty = inconclusive | ✅ No silent success |
 
 ---

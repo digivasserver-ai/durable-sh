@@ -21,29 +21,37 @@ durable::install_sig36_guard
 # ATOMIC WRITES: tmp → mv pattern (survives mid-write kills)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Write stdin to file atomically: durable::atomic_write /path/to/file < data
-# Uses temp file on same filesystem + mv (atomic on POSIX)
+# Write stdin to file atomically: durable::atomic_write /path/to/file [mode] < data
+# Uses temp file on same filesystem + mv (atomic on POSIX). Default mode 0644
+# (mkstemp creates 0600; git-tracked/generated files usually need 0644).
 durable::atomic_write() {
-  local target="$1"
-  local tmp
-  tmp="$(mktemp "${target}.tmp.XXXXXX")" || return 1
+  local target="$1" mode="${2:-0644}"
+  local tmp dir
+  dir="$(dirname -- "$target")"
+  tmp="$(mktemp "${dir}/.durable.tmp.XXXXXX")" || return 1
   cat >"$tmp" || { rm -f "$tmp"; return 1; }
+  chmod "$mode" "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
   mv -f "$tmp" "$target"
 }
 
-# Write string atomically: durable::atomic_write_str /path/to/file "content"
+# Write string atomically: durable::atomic_write_str /path/to/file "content" [mode]
 durable::atomic_write_str() {
-  local target="$1" content="$2"
-  printf '%s' "$content" | durable::atomic_write "$target"
+  local target="$1" content="$2" mode="${3:-0644}"
+  printf '%s' "$content" | durable::atomic_write "$target" "$mode"
 }
 
-# Append atomically: durable::atomic_append /path/to/file < data
+# Append atomically: durable::atomic_append /path/to/file [mode] < data
+# Note: read+write is not concurrency-safe; use only for single-writer logs.
 durable::atomic_append() {
-  local target="$1"
-  local tmp
-  tmp="$(mktemp "${target}.tmp.XXXXXX")" || return 1
-  [[ -f "$target" ]] && cat "$target" >"$tmp" 2>/dev/null || true
+  local target="$1" mode="${2:-0644}"
+  local tmp dir
+  dir="$(dirname -- "$target")"
+  tmp="$(mktemp "${dir}/.durable.tmp.XXXXXX")" || return 1
+  if [[ -f "$target" ]]; then
+    cat "$target" >"$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
+  fi
   cat >>"$tmp" || { rm -f "$tmp"; return 1; }
+  chmod "$mode" "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
   mv -f "$tmp" "$target"
 }
 
@@ -96,19 +104,22 @@ durable::run() {
 
 # Clear .git/index.lock if no git process is alive.
 # Safe: only removes lock when zero git/git-* processes exist (5s grace).
-# Uses pgrep -x to match exact process name (avoids matching "git" in args).
+# Checks process comm names exactly (git, git-remote-https, git-receive-pack, ...).
 durable::git_clear_stale_lock() {
-  local repo_root="${1:-.}"
+  local repo_root="${1:-.}" grace="${2:-5}"
   local lock_file="$repo_root/.git/index.lock"
   [[ -f "$lock_file" ]] || return 0
 
-  # Check for any git process (5s grace for normal exit)
-  sleep 5
-  # pgrep -x matches exact executable name; git, git-*, etc.
-  if ! pgrep -x 'git' >/dev/null 2>&1 && ! pgrep -x 'git-*' >/dev/null 2>&1; then
+  # Grace for normal git exit; callers can pass 0 in tests/controlled flows.
+  (( grace > 0 )) && sleep "$grace"
+  # Match git and git-* by comm name. pgrep -x 'git-*' is literal and misses
+  # git-remote-https; use ps comm scan for portability across procps variants.
+  if ! ps -eo comm= 2>/dev/null | grep -Eq '^git(-.*)?$'; then
     echo "[git] clearing stale index.lock (no git processes alive)" >&2
     rm -f "$lock_file"
+    return 0
   fi
+  return 1
 }
 
 # Commit with retry and proper exit-code handling.
@@ -193,17 +204,44 @@ durable::git_verify_remote_sha() {
   durable::require_output '^[0-9a-f]{40}$' git ls-remote "$remote" "$ref" | awk '{print $1}'
 }
 
+# Check that two remotes point at the same commit for a ref. Returns 0 if equal.
+# Prints "equal <sha>" or "diverged <r1>=<sha1> <r2>=<sha2>" to stdout.
+durable::git_mirror_parity() {
+  local r1="${1:-origin}" r2="${2:-gitlab}" ref="${3:-refs/heads/master}"
+  local s1 s2
+  s1="$(git ls-remote "$r1" "$ref" 2>/dev/null | awk '{print $1}')"
+  s2="$(git ls-remote "$r2" "$ref" 2>/dev/null | awk '{print $1}')"
+  [[ "$s1" =~ ^[0-9a-f]{40}$ ]] || { echo "inconclusive $r1"; return 2; }
+  [[ "$s2" =~ ^[0-9a-f]{40}$ ]] || { echo "inconclusive $r2"; return 2; }
+  if [[ "$s1" == "$s2" ]]; then
+    echo "equal $s1"
+    return 0
+  fi
+  echo "diverged $r1=$s1 $r2=$s2"
+  return 1
+}
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PROCESS SUPERVISION: PID file liveness + restart
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Check if PID file points to living process
+# Check if PID file points to living process.
+# Note: pidfiles can be stale (non-empty but dead) or missing while live; prefer
+# durable::pattern_alive for long-running daemons when a stable pattern exists.
 durable::pid_alive() {
   local pid_file="$1"
   [[ -f "$pid_file" ]] || return 1
   local pid
   pid="$(cat "$pid_file" 2>/dev/null)" || return 1
   [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+# Check for a living process by pgrep -f pattern. Prefer this over pidfiles for
+# daemons; patterns survive pidfile loss/staleness (DEFECT-16 class).
+durable::pattern_alive() {
+  local pattern="$1"
+  [[ -n "$pattern" ]] || return 1
+  pgrep -f -- "$pattern" >/dev/null 2>&1
 }
 
 # Start/restart a daemon with PID file management

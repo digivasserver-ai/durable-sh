@@ -30,11 +30,19 @@
 
 ---
 
+## v0.2.0 hardening (2026-11-23)
+
+| Role | Session | Model |
+|------|---------|-------|
+| **Proot/aarch64 hardening** — Fixed `git_clear_stale_lock` process detection (`pgrep -x 'git-*'` literal bug), added atomic-write mode (0644 default), pattern-based liveness, mirror parity helper, expanded tests/docs | current session | `iceman-free` (OpenCode, dev-unlimited) |
+
 ## Attribution Summary
 
 > **Root cause discovery credit:** OpenCode AI Assistant (`big-pickle`) — forensic investigation, source-code verification, controlled experiments, technical documentation.
 >
 > **Engineering & publication credit:** digivasserver-ai (direction, architecture, release) + OpenCode AI Assistant (`fledge-alpha-free`) — library implementation, test suite, packaging, public release.
+>
+> **v0.2.0 hardening credit:** digivasserver-ai (direction) + OpenCode AI Assistant (`iceman-free`) — proot/aarch64 fixes, tests, docs.
 >
 > **Legal ownership:** digivasserver-ai (work made for hire / tool output).
 
